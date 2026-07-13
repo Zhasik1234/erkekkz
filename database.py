@@ -56,3 +56,5 @@ async def get_recent_purchases(limit: int = 10):
             (limit,)
         ) as cursor:
             return await cursor.fetchall()
+        
+        
