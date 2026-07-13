@@ -77,6 +77,11 @@ from app.handler import router
 from database import init_db  # Подключаем функцию запуска базы данных
 
 TOKEN = os.getenv("TOKEN")
+if not TOKEN:
+    print("Ошибка: Переменная окружения TOKEN не найдена!")
+    sys.exit(1) # Завершить работу, если токена нет
+
+bot = Bot(token=TOKEN)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -94,3 +99,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print('Exit')
+
+
