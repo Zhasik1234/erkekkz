@@ -18,6 +18,29 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
 from database import get_db_admins, add_admin_id, remove_admin_id
 from aiogram.filters import BaseFilter
+from aiogram.exceptions import TelegramAPIError
+
+async def send_notification_to_all_admins(bot, text: str):
+    """Отправляет сообщение всем администраторам бота"""
+    # 1. Получаем список админов из базы данных
+    db_admins = await get_db_admins()  # Возвращает set или list номеров
+    
+    # 2. Создаем общий набор ID и добавляем туда Главного админа
+    all_admins = set(db_admins)
+    all_admins.add(ADMIN_ID)
+    
+    # 3. Рассылаем сообщение каждому админу
+    for admin_chat_id in all_admins:
+        try:
+            await bot.send_message(
+                chat_id=admin_chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML
+            )
+        except TelegramAPIError:
+            # Если кто-то из админов заблокировал бота, пропускаем его,
+            # чтобы сообщение дошло до остальных
+            continue
 
 class IsAdmin(BaseFilter):
     async def __call__(self, event: TelegramObject) -> bool:
@@ -288,13 +311,25 @@ async def handle_receipt(message: Message, state: FSMContext, bot: Bot):
         ]
     ])
     
-    await bot.send_document(
-        chat_id=ADMIN_ID,
-        document=document_id,
-        caption=f"💰 <b>Новая оплата!</b>\nТариф: <b>{sub_type}</b>\nОт: @{user_name} (ID: <code>{user_id}</code>)",
-        reply_markup=admin_pay_kb,
-        parse_mode=ParseMode.HTML
-    )
+    # Собираем всех админов (из базы + Главного)
+    db_admins = await get_db_admins()
+    all_admins = set(db_admins)
+    all_admins.add(ADMIN_ID)
+    
+    # Отправляем чек КАЖДОМУ админу из списка
+    for admin_chat_id in all_admins:
+        try:
+            await bot.send_document(
+                chat_id=admin_chat_id,
+                document=document_id,
+                caption=f"💰 <b>Новая оплата!</b>\nТариф: <b>{sub_type}</b>\nОт: @{user_name} (ID: <code>{user_id}</code>)",
+                reply_markup=admin_pay_kb,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            # Если один админ заблокировал бота, код не упадет и отправит остальным
+            continue
+
     await message.answer("⏳ Чек отправлен администратору. Ожидайте ссылку!\n\n⏳ Чек админдарга жберылды. Ссылканы кутыныз!")
     await state.clear()
 
@@ -330,6 +365,7 @@ async def process_payment_approve(callback: CallbackQuery, bot: Bot):
             disable_web_page_preview=True,
             reply_markup=success_kb
         )
+        # Меняем текст чека у того админа, который нажал кнопку
         await callback.message.edit_caption(
             caption=f"{callback.message.caption}\n\n🟢 <b>Одобрено! Ссылка на {sub_type} отправлена.</b>",
             parse_mode=ParseMode.HTML
@@ -347,6 +383,7 @@ async def process_payment_reject(callback: CallbackQuery, bot: Bot):
             text="❌ <b>Ваша оплата была отклонена администратором.</b>",
             parse_mode=ParseMode.HTML
         )
+        # Меняем текст чека у того админа, который нажал кнопку
         await callback.message.edit_caption(
             caption=f"{callback.message.caption}\n\n🔴 <b>Оплата отклонена.</b>",
             parse_mode=ParseMode.HTML
@@ -376,14 +413,29 @@ async def forward_to_admin(message: Message, state: FSMContext, bot: Bot):
         
     user_name = message.from_user.username or message.from_user.first_name
     admin_text = f"🚨 <b>Новое обращение!</b>\nОт: @{user_name} (ID: <code>{user_id}</code>)\n\n<b>Текст:</b> {message.text}\n\n<i>⚠️ Чтобы ответить, сделай Reply.</i>"
-    try:
-        await bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode=ParseMode.HTML)
+    
+    # Собираем всех админов
+    db_admins = await get_db_admins()
+    all_admins = set(db_admins)
+    all_admins.add(ADMIN_ID)
+    
+    # Отправляем сообщение техподдержки ВСЕМ админам
+    sent_successfully = False
+    for admin_chat_id in all_admins:
+        try:
+            await bot.send_message(chat_id=admin_chat_id, text=admin_text, parse_mode=ParseMode.HTML)
+            sent_successfully = True
+        except Exception:
+            continue
+            
+    if sent_successfully:
         await message.answer("✅ Ваш вопрос успешно отправлен! Ожидайте ответа.")
-    except Exception:
+    else:
         await message.answer("❌ Ошибка отправки сообщения.")
     await state.clear()
 
-@router.message(F.reply_to_message & (F.from_user.id == ADMIN_ID))
+# Разрешаем отвечать любому админу через IsAdmin()
+@router.message(F.reply_to_message, IsAdmin())
 async def admin_reply_handler(message: Message, bot: Bot):
     original_text = message.reply_to_message.text
     if not original_text or "Новое обращение!" not in original_text:
