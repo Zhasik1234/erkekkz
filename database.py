@@ -22,6 +22,11 @@ async def init_db():
             )
         ''')
         await db.commit()
+        await db.execute('''
+    CREATE TABLE IF NOT EXISTS admins (
+        user_id INTEGER PRIMARY KEY
+    )
+''')
 
 # --- ФУНКЦИИ БЛОКИРОВОК ---
 async def get_banned_users() -> set:
@@ -56,5 +61,20 @@ async def get_recent_purchases(limit: int = 10):
             (limit,)
         ) as cursor:
             return await cursor.fetchall()
-        
-        
+
+async def get_db_admins() -> set:
+    """Получает список всех назначенных админов"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT user_id FROM admins') as cursor:
+            rows = await cursor.fetchall()
+            return set(row[0] for row in rows)
+
+async def add_admin_id(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('INSERT OR IGNORE INTO admins (user_id) VALUES (?)', (user_id,))
+        await db.commit()
+
+async def remove_admin_id(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('DELETE FROM admins WHERE user_id = ?', (user_id,))
+        await db.commit()

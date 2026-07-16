@@ -16,6 +16,18 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
+from database import get_db_admins, add_admin_id, remove_admin_id
+from aiogram.filters import BaseFilter
+
+class IsAdmin(BaseFilter):
+    async def __call__(self, event: TelegramObject) -> bool:
+        user_id = event.from_user.id
+        # Главный владелец из .env всегда имеет доступ
+        if user_id == ADMIN_ID:
+            return True
+        # Проверяем, есть ли пользователь в таблице админов БД
+        db_admins = await get_db_admins()
+        return user_id in db_admins
 
 # Импортируем функции базы данных
 from database import get_banned_users, ban_user_id, unban_user_id, add_purchase, get_recent_purchases
@@ -87,19 +99,19 @@ admin_kb = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= ХЭНДЛЕРЫ АДМИН-ПАНЕЛИ =================
 
-@router.message(Command("admin"), F.from_user.id == ADMIN_ID)
+@router.message(Command("admin"), IsAdmin())
 async def open_admin_panel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("🛠 <b>Добро пожаловать в панель администратора:</b>", reply_markup=admin_kb, parse_mode=ParseMode.HTML)
 
-@router.callback_query(F.data == "admin_ban", F.from_user.id == ADMIN_ID)
+@router.callback_query(F.data == "admin_ban", IsAdmin())
 async def admin_ban_click(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer("Введите Telegram ID пользователя, которого нужно заблокировать:")
     await state.set_state(BotStates.admin_waiting_ban)
     await callback.answer()
 
-@router.message(BotStates.admin_waiting_ban, F.from_user.id == ADMIN_ID)
+@router.message(BotStates.admin_waiting_ban, IsAdmin())
 async def process_ban_id(message: Message, state: FSMContext):
     if not message.text.isdigit():
         await message.answer("⚠️ ID должен состоять только из цифр. Попробуйте еще раз:")
@@ -115,14 +127,14 @@ async def process_ban_id(message: Message, state: FSMContext):
     await message.answer(f"✅ Пользователь с ID <code>{target_id}</code> успешно <b>заблокирован</b>.", parse_mode=ParseMode.HTML)
     await state.clear()
 
-@router.callback_query(F.data == "admin_unban", F.from_user.id == ADMIN_ID)
+@router.callback_query(F.data == "admin_unban", IsAdmin())
 async def admin_unban_click(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer("Введите Telegram ID пользователя для разблокировки:")
     await state.set_state(BotStates.admin_waiting_unban)
     await callback.answer()
 
-@router.message(BotStates.admin_waiting_unban, F.from_user.id == ADMIN_ID)
+@router.message(BotStates.admin_waiting_unban, IsAdmin())
 async def process_unban_id(message: Message, state: FSMContext):
     if not message.text.isdigit():
         await message.answer("⚠️ ID должен состоять только из цифр. Попробуйте еще раз:")
@@ -133,7 +145,7 @@ async def process_unban_id(message: Message, state: FSMContext):
     await message.answer(f"🟢 Пользователь с ID <code>{target_id}</code> успешно <b>разблокирован</b>.", parse_mode=ParseMode.HTML)
     await state.clear()
 
-@router.callback_query(F.data == "admin_list", F.from_user.id == ADMIN_ID)
+@router.callback_query(F.data == "admin_list", IsAdmin())
 async def admin_list_click(callback: CallbackQuery):
     banned = await get_banned_users()
     if not banned:
@@ -146,7 +158,7 @@ async def admin_list_click(callback: CallbackQuery):
     await callback.answer()
 
 # Кнопка статистики покупок
-@router.callback_query(F.data == "admin_stats", F.from_user.id == ADMIN_ID)
+@router.callback_query(F.data == "admin_stats", IsAdmin())
 async def admin_stats_click(callback: CallbackQuery):
     purchases = await get_recent_purchases(10)
     
@@ -161,7 +173,7 @@ async def admin_stats_click(callback: CallbackQuery):
         await callback.message.answer(text, parse_mode=ParseMode.HTML)
     await callback.answer()
     
-@router.message(Command("del_pay"), F.from_user.id == ADMIN_ID)
+@router.message(Command("del_pay"), IsAdmin())
 async def delete_purchase(message: Message):
     # Разделим сообщение, чтобы получить ID покупки: /del_pay 5
     args = message.text.split()
@@ -177,6 +189,30 @@ async def delete_purchase(message: Message):
         await db.commit()
         
     await message.answer(f"✅ Покупка с ID {pay_id} удалена из базы.")
+
+# === Оставляем проверку по ADMIN_ID, чтобы управлять админами мог только Владелец ===
+
+@router.message(Command("add_admin"), F.from_user.id == ADMIN_ID)
+async def make_admin(message: Message):
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("Используй: /add_admin <Telegram_ID>")
+        return
+    
+    target_id = int(args[1])
+    await add_admin_id(target_id)
+    await message.answer(f"✅ Пользователь <code>{target_id}</code> назначен администратором.", parse_mode=ParseMode.HTML)
+
+@router.message(Command("remove_admin"), F.from_user.id == ADMIN_ID)
+async def delete_admin(message: Message):
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        await message.answer("Используй: /remove_admin <Telegram_ID>")
+        return
+    
+    target_id = int(args[1])
+    await remove_admin_id(target_id)
+    await message.answer(f"❌ Пользователь <code>{target_id}</code> удален из списка администраторов.", parse_mode=ParseMode.HTML)
 
 # ================= ХЭНДЛЕРЫ ПОЛЬЗОВАТЕЛЕЙ =================
 
