@@ -213,6 +213,20 @@ async def delete_admin(message: Message):
     target_id = int(args[1])
     await remove_admin_id(target_id)
     await message.answer(f"❌ Пользователь <code>{target_id}</code> удален из списка администраторов.", parse_mode=ParseMode.HTML)
+    
+@router.message(Command("admins"), F.from_user.id == ADMIN_ID)
+async def view_admins_list(message: Message):
+    # Получаем список из базы данных
+    db_admins = await get_db_admins()
+    
+    if not db_admins:
+        await message.answer("📋 В базе данных пока нет дополнительных администраторов.")
+    else:
+        text = "👨‍💻 <b>Список дополнительных администраторов:</b>\n\n"
+        for adm_id in db_admins:
+            text += f"• <code>{adm_id}</code>\n"
+            
+        await message.answer(text, parse_mode=ParseMode.HTML)
 
 # ================= ХЭНДЛЕРЫ ПОЛЬЗОВАТЕЛЕЙ =================
 
